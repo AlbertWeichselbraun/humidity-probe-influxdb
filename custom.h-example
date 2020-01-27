@@ -1,0 +1,3 @@
+#define WIFI_SSID ""
+#define WIFI_PASSWORD ""
+#define INFLUXDB_REST_SERVICE_URL "http://influxdb-server-name:8086/write?db=sensors"
