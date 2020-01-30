@@ -172,6 +172,9 @@ boolean transferBatch() {
 /**
  * Connects to Wifi and returns true if a connection has
  * been successfully established.
+ * 
+ * Returns:
+ *   `true` if the connection succeeds `false` otherwise.
  */
 bool connectWifi() {
   int count = 0;
