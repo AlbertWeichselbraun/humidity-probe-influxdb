@@ -1,18 +1,9 @@
 /***************************************************************************
-  This is a library for the BME280 humidity, temperature & pressure sensor
+  Transfers Sensor data from the BME280 to InfluxDB and caches results,
+  if the network is not available yet.
 
-  Designed specifically to work with the Adafruit BMEP280 Breakout 
-  ----> http://www.adafruit.com/products/2651
-
-  These sensors use I2C or SPI to communicate, 2 or 4 pins are required 
-  to interface.
-
-  Adafruit invests time and resources providing this open source code,
-  please support Adafruit andopen-source hardware by purchasing products
-  from Adafruit!
-
-  Written by Limor Fried & Kevin Townsend for Adafruit Industries.  
-  BSD license, all text above must be included in any redistribution
+  Written by Albert Weichselbraun based on examples taken from various ESP32
+  tutorials.
  ***************************************************************************/
 
 #include <QList.h>
@@ -125,28 +116,50 @@ void transferData() {
   }
 
   // Transfer data
-  Serial.print("Transfering ");
-  Serial.print(queue.size());
-  Serial.println(" records...");
-  http.begin(INFLUXDB_REST_SERVICE_URL);
-  http.addHeader("Content-type", "text/plain");
-  std::ostringstream oss;
-  for (int i=queue.size()-1; i >=0; i--)  {
-    struct Measurement m = queue[i];
-    oss << "bme280,sensor=bme280,host=" << WiFi.macAddress() << " temperature=" << m.temperature << ",humidity=" << m.humidity
-      << ",pressure="<< m.pressure << " " << m.time << "000000000\n"; // we need to add 9 zeros to the time, since InfluxDB expects ns.
+  Serial.println("Transfering data to InfluxDB");
+  while (queue.size() > 0 && transferBatch()) {
+    Serial.print(".");
   }
-  Serial.println(oss.str().c_str());
-  int httpResponseCode = http.POST(oss.str().c_str());
-  if (httpResponseCode <= 0) {
-    Serial.println("Error on sending POST");
-  } else {
-    // sending did succeed, so let's delete the queue
-    queue.clear();
-  }
-  http.end();
+  Serial.println("\nCompleted :)");
   // disable Wifi
   WiFi.mode(WIFI_OFF);
+}
+
+/**
+ * Transfer the next batch to InfluxDB.
+ * This is necessary since the httpClient does not allow large posts.
+ */
+boolean transferBatch() {
+    int endIndex = queue.size()-1;
+    if (endIndex < 0) {
+      return false;
+    }
+    int startIndex = endIndex - DATA_TRANSFER_BATCH_SIZE;
+    if (startIndex < 0) {
+      startIndex = 0;
+    }
+    
+    http.begin(INFLUXDB_REST_SERVICE_URL);
+    http.addHeader("Content-type", "text/plain");
+    std::ostringstream oss;
+    for (int i=endIndex; i>=startIndex; i--) {
+      struct Measurement m = queue[i];
+      oss << "bme280,sensor=bme280,host=" << WiFi.macAddress() << " temperature=" << m.temperature << ",humidity=" << m.humidity
+          << ",pressure="<< m.pressure << " " << m.time << "000000000\n"; // we need to add 9 zeros to the time, since InfluxDB expects ns.
+    }
+    int httpResponseCode = http.POST(oss.str().c_str());
+    http.end(); 
+
+    if (httpResponseCode != 204) {
+      Serial.println("Error on sending POST");
+      return false;
+    } 
+    
+    // clear the transferred items from the queue
+    for (int i=endIndex; i>=startIndex; i--) {
+      queue.clear(i);
+    }
+    return true;
 }
 
 /**
