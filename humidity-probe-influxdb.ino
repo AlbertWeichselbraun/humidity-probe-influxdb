@@ -48,6 +48,9 @@ HTTPClient http;
 Adafruit_BME280 bme;            // I2C
 
 
+/**
+ * Setup the humidity probe component.
+ */
 void setup() {
     Serial.begin(115200);
     Serial.println(F("BME280 test"));
@@ -85,7 +88,9 @@ void setup() {
     WiFi.mode(WIFI_OFF);
 }
 
-
+/**
+ * Main program
+ */
 void loop() { 
     long now = esp_log_timestamp();
     // obtain measurments from the sensor
@@ -94,9 +99,8 @@ void loop() {
     m.humidity = bme.readHumidity();
     m.pressure = bme.readPressure() / 100.F;
     time(&m.time);
-    Serial.println(m.time);
 
-    queue.push_front(m);
+    queue.push_back(m);
     if (queue.size() % DATA_TRANSFER_BATCH_SIZE == 0) {
       transferData();
     }
@@ -126,8 +130,11 @@ void transferData() {
 }
 
 /**
- * Transfer the next batch to InfluxDB.
+ * Transfer a batch of size DATA_TRANSFER_BATCH_SIZE to InfluxDB.
  * This is necessary since the httpClient does not allow large posts.
+ * 
+ * Returns:
+ *  `true` if the transfer succeeds `else` otherwise.
  */
 boolean transferBatch() {
     int endIndex = queue.size()-1;
@@ -164,7 +171,7 @@ boolean transferBatch() {
 
 /**
  * Connects to Wifi and returns true if a connection has
- * been successfully estabilshed.
+ * been successfully established.
  */
 bool connectWifi() {
   int count = 0;
