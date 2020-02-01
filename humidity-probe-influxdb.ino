@@ -44,8 +44,9 @@ struct Measurement {
 };
 
 QList<Measurement> queue;       // Queue
-HTTPClient http;
+HTTPClient http;                // HTTPClient user for transfering data to InfluxDB
 Adafruit_BME280 bme;            // I2C
+String host_id;
 
 
 /**
@@ -58,10 +59,9 @@ void setup() {
     // disable bluetooth to save power
     btStop();
 
-    bool status;
     // default settings
     // (you can also pass in a Wire library object like &Wire2)
-    status = bme.begin(0x76);  
+    bool status = bme.begin(0x76);  
     if (status) {
         Serial.println("Detected BME280 sensor at 0x76.");
     } else {
@@ -85,6 +85,10 @@ void setup() {
     } else {
       Serial.println("Done...");
     }
+    // set the host_id
+    host_id = WiFi.macAddress();
+    Serial.print("Setting Host ID to ");
+    Serial.println(host_id);
     WiFi.mode(WIFI_OFF);
 }
 
@@ -151,7 +155,7 @@ boolean transferBatch() {
     std::ostringstream oss;
     for (int i=endIndex; i>=startIndex; i--) {
       struct Measurement m = queue[i];
-      oss << "bme280,sensor=bme280,host=" << WiFi.macAddress() << " temperature=" << m.temperature << ",humidity=" << m.humidity
+      oss << "bme280,sensor=bme280,host=" << host_id << " temperature=" << m.temperature << ",humidity=" << m.humidity
           << ",pressure="<< m.pressure << " " << m.time << "000000000\n"; // we need to add 9 zeros to the time, since InfluxDB expects ns.
     }
     int httpResponseCode = http.POST(oss.str().c_str());
