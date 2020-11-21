@@ -31,7 +31,7 @@
 #define WIFI_RECONNECT_TRY_MAX 10
 #define WIFI_RECONNECT_DELAY_MS 500
 
-#define TIMESERVER "europe.pool.ntp.org"
+#define TIMESERVER "pool.ntp.org"
 #define SLEEP_TIME 60*1000          // time between measurements in ms
 #define DATA_TRANSFER_BATCH_SIZE 10 // transfer after this number of items have been collected
 
@@ -84,14 +84,18 @@ void setup() {
     } else {
       Serial.println("Done...");
     }
+    Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
     WiFi.mode(WIFI_OFF);
 }
+
 
 /**
  * Main program
  */
 void loop() { 
     long now = esp_log_timestamp();
+    // initialize the sensor
+    bme.init();
     // obtain measurments from the sensor
     struct Measurement m;
     m.temperature = bme.readTemperature();
