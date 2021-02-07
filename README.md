@@ -4,7 +4,7 @@ An ESP32 program for obtaining sensor data from an BME280 and saving it to an In
 ## Features
 
 * Performs measurements every 60 seconds (customizable) and transfers them to an InfluxDB database.
-* Automatically detects the sensor's I2C bus ID.
+* Automatically detects the sensor type (BME280 or BMP280) and the sensor's I2C bus ID.
 * Minimize power consumption by
     - disabling Bluetooth
     - putting the ESP32 into light sleep mode between measurements 
@@ -13,7 +13,7 @@ An ESP32 program for obtaining sensor data from an BME280 and saving it to an In
 
 ## Required Libraries
 
-* Adafruit BME280 Library (for reading sensor data)
+* [BMx280i](https://bitbucket.org/christandlg/bmx280mi) sensor library from Gregor Christandl
 * QList (for caching sensor data)
 
 ## Tutorial
