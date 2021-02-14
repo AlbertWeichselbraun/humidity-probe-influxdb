@@ -71,12 +71,6 @@ bool setupSensor(byte address) {
   }
   
   Serial.println("Detected BMx280 sensor at 0x" + String(address, HEX) + ".");
-  if (currentSensor->isBME280()) {
-    Serial.println("Identified sensor as BME280.");
-  } else {
-    Serial.println("Identified sensor as BMP280.");
-  } 
-
   return true;
 }
 
