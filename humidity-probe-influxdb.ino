@@ -11,14 +11,12 @@
 
 /**
  * Todo:
- *  1. replace queue with struct
  *  2. deep sleep support
  *  3. connect to wifi only at request
  *  
  */
 
 #include <stdbool.h>
-#include <WiFi.h>
 #include "time.h"
 #include <HTTPClient.h>
 
@@ -30,6 +28,7 @@
 
 #include <esp_sleep.h>
 #include <esp_log.h>    // support for timestamps
+#include <esp_wifi.h>
 
 /* custom.h defines the following constants:
    - WIFI_SSID
@@ -70,8 +69,18 @@ bool firstStart = false;
 bool hasSensor0x76;
 bool hasSensor0x77;
 
+// Wifi configuration
+const wifi_config_t wifi_config = {
+    .sta = {
+        .ssid = WIFI_SSID,
+        .password = WIFI_PASSWORD
+        .threshold.authmode = WIFI_AUTH_WPA2_PSK
+    };
+};
+
+
 /**
- ar  Tries to setup the sensor on the given I2C address.
+ Tries to setup the sensor on the given I2C address.
 
    Returns:
      true if successful, otherwise false
@@ -168,8 +177,8 @@ void writeSensorMeasure(BMx280I2C *currentSensor, byte address) {
     delay(100);
   } while (!currentSensor->hasValue());
 
-  
   // obtain measurments from the sensor
+  delay(50);
   measurements[numMeasurement % MAX_READINGS].temperature = currentSensor->getTemperature();
   measurements[numMeasurement % MAX_READINGS].pressure = currentSensor->getPressure();
   if (currentSensor->isBME280()) {
@@ -287,5 +296,7 @@ bool connectWifi() {
     delay(WIFI_RECONNECT_DELAY_MS);
     count++;
   }
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
   return WiFi.status() == WL_CONNECTED;
 }
