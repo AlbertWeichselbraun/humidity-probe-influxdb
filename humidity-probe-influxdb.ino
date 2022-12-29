@@ -84,7 +84,6 @@ bool setupSensor(byte address) {
   } else {
     currentSensor = &bmx280x77;
   }
-
   Serial.println("Detected BMx280 sensor at 0x" + String(address, HEX) + ".");
   return true;
 }
