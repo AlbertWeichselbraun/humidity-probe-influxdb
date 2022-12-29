@@ -13,7 +13,7 @@
 #include "time.h"
 #include <HTTPClient.h>
 
-#include <WiFi.h>
+#include "WiFi.h"
 #include <Wire.h>
 #include <BMx280I2C.h>
 
@@ -22,6 +22,7 @@
 
 #include <esp_sleep.h>
 #include <esp_log.h>    // support for timestamps
+
 
 /* custom.h defines the following constants:
    - WIFI_SSID
@@ -35,13 +36,16 @@
 #define WIFI_RECONNECT_DELAY_MS 500
 
 #define TIMESERVER "pool.ntp.org"
+
 #define SLEEP_TIME 60*1000                  // time between measurements in ms
-#define DATA_TRANSFER_BATCH_SIZE 10         // transfer after this number of items have been collected
+#define DATA_TRANSFER_BATCH_SIZE 30         // transfer after this number of items have been collected
+#define TIMESERVER_UPDATE_MINUTES 1440      // update time from timeserver after the given number of minutes
 #define TRANSFER_TEMP_DELTA_THRESHOLD 1     // transfer, if the given temperature threshold between the first and current reading is exceeded
 #define TRANSFER_HUMIDITY_DELTA_THRESHOLD 5 // transfer, if the given humidity threshold between the first and current readings is exceeded
 #define MAX_READINGS 150                    // preliminary estimation of the maximum number of readings we can cache
 
 // Define data record
+RTC_DATA_ATTR int numRestart = 0;
 RTC_DATA_ATTR int numMeasurement = 0;
 
 struct Measurement {
@@ -82,11 +86,6 @@ bool setupSensor(byte address) {
   }
 
   Serial.println("Detected BMx280 sensor at 0x" + String(address, HEX) + ".");
-  if (currentSensor->isBME280()) {
-    Serial.println("Identified sensor as BME280.");
-  } else {
-    Serial.println("Identified sensor as BMP280.");
-  }
   return true;
 }
 
@@ -99,15 +98,33 @@ bool setupSensor(byte address) {
 */
 bool setupWifi() {
   int count = 0;
+  WiFi.disconnect(true);
+  delay(WIFI_RECONNECT_DELAY_MS);
   WiFi.mode(WIFI_AP);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   while (WiFi.status() != WL_CONNECTED && count < WIFI_RECONNECT_TRY_MAX) {
+    Serial.print(".");
+    Serial.flush();
     delay(WIFI_RECONNECT_DELAY_MS);
     count++;
   }
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
+  Serial.flush();
   return WiFi.status() == WL_CONNECTED;
+}
+
+/**
+ * Update time from timeserver.
+ */
+void updateTime() {
+  Serial.println("Obtaining time from time server...");
+  configTime(0, 0, TIMESERVER);
+  struct tm timeinfo;
+  while (!getLocalTime(&timeinfo)) {
+    Serial.println("Failed to obtain time from timeserver. Waiting for retry.");
+    delay(WIFI_RECONNECT_DELAY_MS);
+  } 
 }
 
 /**
@@ -133,16 +150,8 @@ void initialSetup() {
   // setup wifi and time
   Serial.println("Connecting to Wifi...");
   while (!setupWifi());
-  Serial.println("Obtaining time from time server...");
-  configTime(0, 0, TIMESERVER);
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    Serial.println("ERROR: Failed to obtain time!");
-    while (1);
-  } else {
-    Serial.println("Done...");
-  }
-  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+  updateTime();
+  WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
 }
 
@@ -150,17 +159,20 @@ void initialSetup() {
    Setup the humidity probe component.
 */
 void setup() {
+  numRestart++;
   Serial.begin(115200);
 
   if (!initialized) {
     initialSetup();
-  }
-
+    initialized = true;
+  } 
+  
   //
   // force transfer of sensor data, if the touch fields have been 
   // touched.
   //
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TOUCHPAD) {
+    Serial.println("Forcing write of sensor data....");
     transferSensorData();
   }
  
@@ -232,7 +244,9 @@ void writeSensorMeasure(BMx280I2C *currentSensor, byte address) {
   }
   measurements[numMeasurement % MAX_READINGS].address = address;
   time(&measurements[numMeasurement % MAX_READINGS].time);
-  Serial.print("Recording measurement with temperature: ");
+  Serial.print("Recording measurement on ");
+  Serial.print(ctime(&measurements[numMeasurement % MAX_READINGS].time));
+  Serial.print("with temperature: ");
   Serial.print(measurements[numMeasurement % MAX_READINGS].temperature);
   Serial.print(", pressure: ");
   Serial.print(measurements[numMeasurement % MAX_READINGS].pressure);
@@ -257,8 +271,8 @@ void loop() {}
 */
 void transferSensorDataIfNecessary() {
   if (numMeasurement < DATA_TRANSFER_BATCH_SIZE 
-      && abs(measurements[0].temperature - measurements[numMeasurement % MAX_READINGS].temperature) <  TRANSFER_TEMP_DELTA_THRESHOLD
-      && abs(measurements[0].humidity - measurements[numMeasurement % MAX_READINGS].humidity) < TRANSFER_HUMIDITY_DELTA_THRESHOLD) {
+      && abs(measurements[0].temperature - measurements[(numMeasurement-1) % MAX_READINGS].temperature) <  TRANSFER_TEMP_DELTA_THRESHOLD
+      && abs(measurements[0].humidity - measurements[(numMeasurement-1) % MAX_READINGS].humidity) < TRANSFER_HUMIDITY_DELTA_THRESHOLD) {
     return;  
   }
   transferSensorData();
@@ -274,11 +288,18 @@ void transferSensorData() {
     return;
   }
 
+  // update time from timeserver, if required
+  if (numRestart >= TIMESERVER_UPDATE_MINUTES) {
+    updateTime();
+    numRestart = 0;
+  }
+
   // Transfer data
   Serial.println("Transferring data to InfluxDB");
   transferBatch();
   Serial.println("\nCompleted :)");
   // disable Wifi
+  WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);  
 }
 
@@ -294,7 +315,7 @@ boolean transferBatch() {
   http.addHeader("Content-type", "text/plain");
   std::ostringstream oss;
   
-  for (int i=1; i < min(numMeasurement, MAX_READINGS); i++) {
+  for (int i=0; i < min(numMeasurement, MAX_READINGS); i++) {
     if (measurements[i].humidity >= 0) {
       oss << "bme280,sensor=bme280x0" << String(measurements[i].address, HEX) << ",host=" << WiFi.macAddress().c_str() << " temperature=" << measurements[i].temperature << ",humidity=" 
           << measurements[i].humidity << ",pressure=" << measurements[i].pressure  << " " << measurements[i].time << "000000000\n"; // we need to add 9 zeros to the time, since InfluxDB expects ns.
@@ -303,6 +324,7 @@ boolean transferBatch() {
           << ",pressure=" << measurements[i].pressure << " " << measurements[i].time << "000000000\n"; // we need to add 9 zeros to the time, since InfluxDB expects ns.
     }
   }
+  Serial.println(oss.str().c_str());
   int httpResponseCode = http.POST(oss.str().c_str());
   http.end();
 
