@@ -34,14 +34,6 @@
 
 #define WIFI_RECONNECT_TRY_MAX 10
 #define WIFI_RECONNECT_DELAY_MS 500
-
-#define TIMESERVER "pool.ntp.org"
-
-#define SLEEP_TIME 60*1000                  // time between measurements in ms
-#define DATA_TRANSFER_BATCH_SIZE 30         // transfer after this number of items have been collected
-#define TIMESERVER_UPDATE_MINUTES 1440      // update time from timeserver after the given number of minutes
-#define TRANSFER_TEMP_DELTA_THRESHOLD 1     // transfer, if the given temperature threshold between the first and current reading is exceeded
-#define TRANSFER_HUMIDITY_DELTA_THRESHOLD 2 // transfer, if the given humidity threshold between the first and current readings is exceeded
 #define MAX_READINGS 150                    // preliminary estimation of the maximum number of readings we can cache
 
 // Define data record

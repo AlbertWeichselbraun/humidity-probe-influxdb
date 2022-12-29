@@ -1,11 +1,16 @@
-// WiFi settings
+//
+// basic settings
+//
 #define WIFI_SSID ""
 #define WIFI_PASSWORD ""
 #define INFLUXDB_REST_SERVICE_URL "http://influxdb-server-name:8086/write?db=sensors"
 
-// Other settings
-#define TIMESERVER "pool.ntp.org"
-#define SLEEP_TIME 60*1000          // time between measurements in ms
-#define DATA_TRANSFER_BATCH_SIZE 10 // transfer after this number of items have been collected
-
-
+//
+// advanced settings
+//
+#define TIMESERVER "pool.ntp.org"           // timeserver
+#define SLEEP_TIME 60*1000                  // time between measurements in ms
+#define DATA_TRANSFER_BATCH_SIZE 30         // transfer after this number of items have been collected
+#define TIMESERVER_UPDATE_MINUTES 1440      // update time from timeserver after the given number of minutes
+#define TRANSFER_TEMP_DELTA_THRESHOLD 1     // transfer, if the given temperature threshold between the first and current reading is exceeded
+#define TRANSFER_HUMIDITY_DELTA_THRESHOLD 2 // transfer, if the given humidity threshold between the first and current readings is exceeded
