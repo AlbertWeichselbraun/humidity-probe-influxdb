@@ -1,12 +1,12 @@
 /***************************************************************************
-  Transfers Sensor data from the BME280 to a time series database and caches 
-  results, if the network is not available yet.
-
-  Sensor library:
-     https://bitbucket.org/christandlg/bmx280mi/
-
-  Written by Albert Weichselbraun based on examples taken from various ESP32
-  tutorials.
+ *  Transfers Sensor data from the BME280 to a time series database and 
+ *  caches measurements, if the network is not available yet.
+ *  
+ *  Sensor library:     
+ *    https://bitbucket.org/christandlg/bmx280mi/
+ *    
+ *  (C)opyrights 2020-2022 by Albert Weichselbraun.
+ *  
  ***************************************************************************/
 
 #include <stdbool.h>
@@ -24,15 +24,19 @@
 #include <esp_log.h>    // support for timestamps
 
 
-/* custom.h defines the following constants:
-   - WIFI_SSID
-   - WIFI_PASSWORD
-   - INFLUXDB_REST_SERVICE_URL
-*/
+/***************************************************************************  
+ * custom.h defines the following constants:
+ *   - WIFI_SSID
+ *   - WIFI_PASSWORD
+ *   - INFLUXDB_REST_SERVICE_URL
+ *     
+ *  and additional optional tuning parameters.
+ ***************************************************************************/
 #include "custom.h"
 
 #define WIFI_RECONNECT_DELAY_MS 500
-#define MAX_READINGS 150                    // preliminary estimation of the maximum number of readings we can cache
+#define MAX_READINGS 160                    // preliminary estimation of the maximum number of readings we can cache
+#define HTTP_TRANSFER_BATCH_SIZE 15         // http transfer batch size
 
 // Define data record
 RTC_DATA_ATTR int numRestart = 0;
@@ -56,12 +60,19 @@ RTC_DATA_ATTR bool hasSensor0x76;
 RTC_DATA_ATTR bool hasSensor0x77;
 RTC_DATA_ATTR bool firstRun = true;
 
-/**
- Tries to setup the sensor on the given I2C address.
 
-   Returns:
-     true if successful, otherwise false
-*/
+/***************************************************************************
+ * loop is never called (deep sleep)
+ ***************************************************************************/
+void loop() {}
+
+
+/***************************************************************************
+ *  Setup sensor on the given I2C address.
+ *  
+ *  Returns:     
+ *    true if successful, otherwise false
+ ***************************************************************************/
 bool setupSensor(byte address) {
   Wire.beginTransmission(address);
   if (Wire.endTransmission() != 0) {
@@ -78,14 +89,15 @@ bool setupSensor(byte address) {
   return true;
 }
 
-/**
-   Connects to Wifi and returns true if a connection has
-   been successfully established.
-
-   Returns:
-     true if the setting up the Wifi succeeded, false otherwise.
-*/
+/***************************************************************************
+ *  Connects to Wifi and returns true if a connection has 
+ *  been successfully established.
+ *   
+ *  Returns:     
+ *    true if the setting up the Wifi succeeded, false otherwise.
+ ***************************************************************************/
 bool setupWifi() {
+  Serial.println("Connecting to Wifi.");
   if (WiFi.getMode() != WIFI_AP) {
     WiFi.mode(WIFI_AP);
   }
@@ -106,9 +118,11 @@ bool setupWifi() {
   return WiFi.status() == WL_CONNECTED;
 }
 
-/**
- * Update time from timeserver.
- */
+/*************************************************************************** #
+ *  
+ *  Update time from timeserver.
+ *  
+ ***************************************************************************/
 void updateTime() {
   Serial.println("Obtaining time from time server...");
   configTime(0, 0, TIMESERVER);
@@ -119,15 +133,14 @@ void updateTime() {
   } 
 }
 
-/**
+/***************************************************************************
  * Perform the initial program setup.
  * - disable Bluetooth
  * - setup sensors
  * - setup WiFi and time
- */
+ ***************************************************************************/
 void initialSetup() {
   // disable Bluetooth to save power
-  btStop();
   Serial.print("Measurments size...");
   Serial.println(sizeof(measurements));
   
@@ -142,32 +155,25 @@ void initialSetup() {
   }
 
   // setup wifi and time
-  Serial.println("Connecting to Wifi...");
   while (!setupWifi());
   updateTime();
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
 }
 
-/**
-   Setup the humidity probe component.
-*/
+/***************************************************************************   
+ *    
+ * Main program called after boot and deep sleep.
+ * 
+ ***************************************************************************/
 void setup() {
   numRestart++;
+  btStop();
   Serial.begin(115200);
 
-  if (firstRun) {
+  if (firstRun  ) {
     initialSetup();
   } 
-  
-  //
-  // force transfer of sensor data, if the touch fields have been 
-  // touched.
-  //
-  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TOUCHPAD) {
-    Serial.println("Forcing write of sensor data....");
-    transferSensorData();
-  }
  
   //
   // obtain a measurement and enter deep sleep afterwards
@@ -175,12 +181,12 @@ void setup() {
   long now = esp_log_timestamp();
   // initialize the sensor
   if (hasSensor0x76 == true) {
-    writeSensorMeasure(&bmx280x76, 0x76);
+    addSensorMeasure(&bmx280x76, 0x76);
     transferSensorDataIfNecessary();
   }
 
   if (hasSensor0x77 == true) {
-    writeSensorMeasure(&bmx280x77, 0x77);
+    addSensorMeasure(&bmx280x77, 0x77);
     transferSensorDataIfNecessary();
   }
 
@@ -191,22 +197,19 @@ void setup() {
 
   Serial.println("Sleeping....");
   Serial.flush();
-  esp_sleep_enable_touchpad_wakeup();
   esp_sleep_enable_timer_wakeup(60 * 1000 * 1000 - (esp_log_timestamp() - now) * 1000);
   esp_deep_sleep_start();
 }
 
-/**
-   Adds the measurement for the given sensor and i2c address to the
-   measurements array.
-
-   Args:
- *  *currentSensor: pointer to the sensor to use for the measure
-    address: i2c address of the sensor (0x76 or 0x77)
-
-*/
-void writeSensorMeasure(BMx280I2C *currentSensor, byte address) {
-
+/***************************************************************************
+ *  Adds the measurement for the given sensor and i2c address to the
+ *  measurements array.
+ * 
+ *  Args:
+ *  - currentSensor: pointer to the sensor to use for the measure
+ *  - address: i2c address of the sensor (0x76 or 0x77)
+ ***************************************************************************/
+void addSensorMeasure(BMx280I2C *currentSensor, byte address) {
   Wire.begin();
   currentSensor->begin();
   //reset sensor to default parameters.
@@ -242,7 +245,9 @@ void writeSensorMeasure(BMx280I2C *currentSensor, byte address) {
   }
   measurements[numMeasurement % MAX_READINGS].address = address;
   time(&measurements[numMeasurement % MAX_READINGS].time);
-  Serial.print("Recording measurement on ");
+  Serial.print("Recording measurement #");
+  Serial.print(numMeasurement);
+  Serial.print(" on ");
   Serial.print(ctime(&measurements[numMeasurement % MAX_READINGS].time));
   Serial.print("with temperature: ");
   Serial.print(measurements[numMeasurement % MAX_READINGS].temperature);
@@ -256,17 +261,13 @@ void writeSensorMeasure(BMx280I2C *currentSensor, byte address) {
   numMeasurement++;
 }
 
-/**
-   Loop is never executed due to the use of deep sleep mode
-*/
-void loop() {}
-
-/**
-   Transfers the data to the server, if that's necessary, i.e., one of the following conditions
-   is met:
-   - we haven't yet collected more than DATA_TRANSFER_BATCH_SIZE data points and
-   - neither the temperature nor the humidity threshold is exceeded
-*/
+/***************************************************************************   
+ *    Transfers the data to the server, if that's necessary, i.e., one of 
+ *    the following conditions is met:   
+ *    - we haven't yet collected more than DATA_TRANSFER_BATCH_SIZE data 
+ *      points, or
+ *    - neither the temperature nor the humidity threshold is exceeded.
+ ***************************************************************************/
 void transferSensorDataIfNecessary() {
   if (numMeasurement < DATA_TRANSFER_BATCH_SIZE 
       && abs(measurements[0].temperature - measurements[(numMeasurement-1) % MAX_READINGS].temperature) <  TRANSFER_TEMP_DELTA_THRESHOLD
@@ -276,9 +277,10 @@ void transferSensorDataIfNecessary() {
   transferSensorData();
 }
 
-/**
- * Transfer the sensor data.
- */
+/***************************************************************************
+ *  Transfer the sensor data and update the time from timeserver, 
+ *  if required.
+ ***************************************************************************/
 void transferSensorData() {
   // Connect to Wifi
   if (!setupWifi()) {
@@ -301,18 +303,15 @@ void transferSensorData() {
   WiFi.mode(WIFI_OFF);  
 }
 
-/**
-   Transfer all stored measurements to the time series database.
-   This is necessary since the httpClient does not allow large posts.
-
-   Returns:
-    `true` if the transfer succeeds `else` otherwise.
-*/
+/***************************************************************************
+ *  Transfer all stored measurements to the time series database.
+ *  This is necessary since the httpClient does not allow large posts. 
+ *  
+ *  Returns:    
+ *    true if the transfer succeeds else otherwise.
+ ***************************************************************************/
 boolean transferBatch() {
-  http.begin(INFLUXDB_REST_SERVICE_URL);
-  http.addHeader("Content-type", "text/plain");
-  std::ostringstream oss;
-  
+  std::ostringstream oss;  
   for (int i=0; i < min(numMeasurement, MAX_READINGS); i++) {
     if (measurements[i].humidity >= 0) {
       oss << "bme280,sensor=bme280x0" << String(measurements[i].address, HEX) << ",host=" << WiFi.macAddress().c_str() << " temperature=" << measurements[i].temperature << ",humidity=" 
@@ -321,16 +320,31 @@ boolean transferBatch() {
       oss << "bme280,sensor=bmp280x0" << String(measurements[i].address, HEX) <<  ",host=" << WiFi.macAddress().c_str() << " temperature=" << measurements[i].temperature
           << ",pressure=" << measurements[i].pressure << " " << measurements[i].time << "000000000\n"; // we need to add 9 zeros to the time, since InfluxDB expects ns.
     }
+    if (((i+1) % HTTP_TRANSFER_BATCH_SIZE) == 0) {
+      transferString(oss.str().c_str());
+      oss.clear();
+    }
   }
-  Serial.println(oss.str().c_str());
-  int httpResponseCode = http.POST(oss.str().c_str());
-  http.end();
-
-  if (httpResponseCode != 204) {
-    Serial.println("Error on sending POST");
-    return false;
-  }
-  // transfer completed; reset the number of measurements
+  transferString(oss.str().c_str());
   numMeasurement = 0;
   return true;
+}
+
+/***************************************************************************
+ *  Transfers the given string to the time series database.
+ *  
+ *  Returns:    
+ *    true if the transfer succeeds else otherwise.
+ ***************************************************************************/
+
+boolean transferString(const char* c_str) {
+  if (strlen(c_str) == 0) {
+    return true;
+  }
+  Serial.println(c_str);
+  http.begin(INFLUXDB_REST_SERVICE_URL);
+  http.addHeader("Content-type", "text/plain");
+  int httpResponseCode = http.POST(c_str);
+  http.end();
+  return httpResponseCode == 204;
 }
