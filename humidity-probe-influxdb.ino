@@ -13,7 +13,7 @@
 #include "time.h"
 #include <HTTPClient.h>
 
-#include "WiFi.h"
+#include <WiFi.h>
 #include <Wire.h>
 #include <BMx280I2C.h>
 
@@ -31,8 +31,6 @@
 */
 #include "custom.h"
 
-
-#define WIFI_RECONNECT_TRY_MAX 10
 #define WIFI_RECONNECT_DELAY_MS 500
 #define MAX_READINGS 150                    // preliminary estimation of the maximum number of readings we can cache
 
@@ -56,7 +54,7 @@ BMx280I2C bmx280x77(0x77);      // Sensor at 0x77
 
 RTC_DATA_ATTR bool hasSensor0x76;
 RTC_DATA_ATTR bool hasSensor0x77;
-RTC_DATA_ATTR bool initialized = false;
+RTC_DATA_ATTR bool firstRun = true;
 
 /**
  Tries to setup the sensor on the given I2C address.
@@ -88,20 +86,23 @@ bool setupSensor(byte address) {
      true if the setting up the Wifi succeeded, false otherwise.
 */
 bool setupWifi() {
-  int count = 0;
-  WiFi.disconnect(true);
-  delay(WIFI_RECONNECT_DELAY_MS);
-  WiFi.mode(WIFI_AP);
+  if (WiFi.getMode() != WIFI_AP) {
+    WiFi.mode(WIFI_AP);
+  }
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  while (WiFi.status() != WL_CONNECTED && count < WIFI_RECONNECT_TRY_MAX) {
+  int count = 0;
+  while (WiFi.status() != WL_CONNECTED && count < 12) {
+    count++;
+    if (count % 4 == 0) {
+      WiFi.disconnect(true);
+      WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    }
     Serial.print(".");
     Serial.flush();
     delay(WIFI_RECONNECT_DELAY_MS);
-    count++;
   }
-  Serial.print("IP Address: ");
+  Serial.print("Wifi: IP Address: ");
   Serial.println(WiFi.localIP());
-  Serial.flush();
   return WiFi.status() == WL_CONNECTED;
 }
 
@@ -127,6 +128,8 @@ void updateTime() {
 void initialSetup() {
   // disable Bluetooth to save power
   btStop();
+  Serial.print("Measurments size...");
+  Serial.println(sizeof(measurements));
   
   // setup sensors
   Serial.println(F("Detecting sensor..."));
@@ -153,9 +156,8 @@ void setup() {
   numRestart++;
   Serial.begin(115200);
 
-  if (!initialized) {
+  if (firstRun) {
     initialSetup();
-    initialized = true;
   } 
   
   //
@@ -180,6 +182,11 @@ void setup() {
   if (hasSensor0x77 == true) {
     writeSensorMeasure(&bmx280x77, 0x77);
     transferSensorDataIfNecessary();
+  }
+
+  if (firstRun) {
+    transferSensorData();
+    firstRun = false;
   }
 
   Serial.println("Sleeping....");
