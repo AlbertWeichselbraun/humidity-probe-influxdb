@@ -22,6 +22,8 @@
 
 #include <esp_sleep.h>
 #include <esp_log.h>    // support for timestamps
+#include "esp_bt.h"
+#include "esp_wifi.h"
 
 
 /***************************************************************************  
@@ -36,7 +38,7 @@
 
 #define WIFI_RECONNECT_DELAY_MS 500
 #define MAX_READINGS 160                    // preliminary estimation of the maximum number of readings we can cache
-#define HTTP_TRANSFER_BATCH_SIZE 15         // http transfer batch size
+#define HTTP_TRANSFER_BATCH_SIZE 10         // http transfer batch size
 
 // Define data record
 RTC_DATA_ATTR int numRestart = 0;
@@ -168,10 +170,10 @@ void initialSetup() {
  ***************************************************************************/
 void setup() {
   numRestart++;
-  btStop();
+  esp_bt_controller_disable();
   Serial.begin(115200);
 
-  if (firstRun  ) {
+  if (firstRun) {
     initialSetup();
   } 
  
@@ -195,6 +197,10 @@ void setup() {
     firstRun = false;
   }
 
+  // Disable Wi-Fi
+  esp_wifi_stop();
+
+  // go to sleep
   Serial.println("Sleeping....");
   Serial.flush();
   esp_sleep_enable_timer_wakeup(60 * 1000 * 1000 - (esp_log_timestamp() - now) * 1000);
@@ -246,7 +252,7 @@ void addSensorMeasure(BMx280I2C *currentSensor, byte address) {
   measurements[numMeasurement % MAX_READINGS].address = address;
   time(&measurements[numMeasurement % MAX_READINGS].time);
   Serial.print("Recording measurement #");
-  Serial.print(numMeasurement);
+  Serial.print(numMeasurement + 1);
   Serial.print(" on ");
   Serial.print(ctime(&measurements[numMeasurement % MAX_READINGS].time));
   Serial.print("with temperature: ");
@@ -322,6 +328,7 @@ boolean transferBatch() {
     }
     if (((i+1) % HTTP_TRANSFER_BATCH_SIZE) == 0) {
       transferString(oss.str().c_str());
+      oss.str("");
       oss.clear();
     }
   }
