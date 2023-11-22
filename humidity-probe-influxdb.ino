@@ -250,7 +250,8 @@ void addSensorMeasure(BMx280I2C *currentSensor, byte address) {
     measurements[numMeasurement % MAX_READINGS].humidity = -1;
   }
   measurements[numMeasurement % MAX_READINGS].address = address;
-  time(&measurements[numMeasurement % MAX_READINGS].time);
+  measurements[numMeasurement % MAX_READINGS].time = time(NULL);
+  // time(&measurements[numMeasurement % MAX_READINGS].time);
   Serial.print("Recording measurement #");
   Serial.print(numMeasurement + 1);
   Serial.print(" on ");
