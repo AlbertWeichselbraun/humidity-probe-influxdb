@@ -5,7 +5,7 @@
  *  Sensor library:     
  *    https://bitbucket.org/christandlg/bmx280mi/
  *    
- *  (C)opyrights 2020-2022 by Albert Weichselbraun.
+ *  (C)opyrights 2020-2023 by Albert Weichselbraun.
  *  
  ***************************************************************************/
 
@@ -43,6 +43,7 @@
 // Define data record
 RTC_DATA_ATTR int numRestart = 0;
 RTC_DATA_ATTR int numMeasurement = 0;
+RTC_DATA_ATTR int skip = 0;                 // metrics to skip
 
 struct Measurement {
   float temperature;
@@ -127,6 +128,7 @@ bool setupWifi() {
  ***************************************************************************/
 void updateTime() {
   Serial.println("Obtaining time from time server...");
+  setenv("TZ", "UTC0", 1);
   configTime(0, 0, TIMESERVER);
   struct tm timeinfo;
   while (!getLocalTime(&timeinfo)) {
@@ -180,7 +182,7 @@ void setup() {
   //
   // obtain a measurement and enter deep sleep afterwards
   // 
-  long now = esp_log_timestamp();
+  long then = esp_log_timestamp();
   // initialize the sensor
   if (hasSensor0x76 == true) {
     addSensorMeasure(&bmx280x76, 0x76);
@@ -203,7 +205,8 @@ void setup() {
   // go to sleep
   Serial.println("Sleeping....");
   Serial.flush();
-  esp_sleep_enable_timer_wakeup(60 * 1000 * 1000 - (esp_log_timestamp() - now) * 1000);
+  // sleep for SLEEP time adjusted for the time already spend since the last wakeup
+  esp_sleep_enable_timer_wakeup(SLEEP_TIME * 1000 - (esp_log_timestamp() - then) * 1000);
   esp_deep_sleep_start();
 }
 
@@ -216,6 +219,25 @@ void setup() {
  *  - address: i2c address of the sensor (0x76 or 0x77)
  ***************************************************************************/
 void addSensorMeasure(BMx280I2C *currentSensor, byte address) {
+  // skip sensor reading based on the available puffer size
+  if (numMeasurement > MAX_READINGS * 0.8 && skip < 15) {
+      skip += 1 ;
+      return;
+  }
+  if (numMeasurement > MAX_READINGS * 0.6 && skip < 7) {
+      skip += 1 ;
+      return;
+  }
+  if (numMeasurement > MAX_READINGS * 0.4 && skip < 3) {
+    skip += 1;
+    return;
+  }
+  if (numMeasurement > MAX_READINGS * 0.2 && skip < 1) {
+    skip += 1;
+    return;
+  }
+  skip = 0;
+
   Wire.begin();
   currentSensor->begin();
   //reset sensor to default parameters.
@@ -313,6 +335,9 @@ void transferSensorData() {
 /***************************************************************************
  *  Transfer all stored measurements to the time series database.
  *  This is necessary since the httpClient does not allow large posts. 
+ * 
+ *  Use the InfluxDB line protocol
+ *  see: https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/
  *  
  *  Returns:    
  *    true if the transfer succeeds else otherwise.
@@ -325,7 +350,7 @@ boolean transferBatch() {
           << measurements[i].humidity << ",pressure=" << measurements[i].pressure  << " " << measurements[i].time << "000000000\n"; // we need to add 9 zeros to the time, since InfluxDB expects ns.
     } else {
       oss << "bme280,sensor=bmp280x0" << String(measurements[i].address, HEX) <<  ",host=" << WiFi.macAddress().c_str() << " temperature=" << measurements[i].temperature
-          << ",pressure=" << measurements[i].pressure << " " << measurements[i].time << "000000000\n"; // we need to add 9 zeros to the time, since InfluxDB expects ns.
+          << ",pressure=" << measurements[i].pressure << " " << measurements[i].time << "000000000\n"; // 
     }
     if (((i+1) % HTTP_TRANSFER_BATCH_SIZE) == 0) {
       transferString(oss.str().c_str());
