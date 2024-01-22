@@ -5,7 +5,7 @@
  *  Sensor library:     
  *    https://bitbucket.org/christandlg/bmx280mi/
  *    
- *  (C)opyrights 2020-2023 by Albert Weichselbraun.
+ *  (C)opyrights 2020-2024 by Albert Weichselbraun.
  *  
  ***************************************************************************/
 
@@ -16,6 +16,7 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include <BMx280I2C.h>
+#include <AHT20.h>
 
 #include <string>
 #include <sstream>
@@ -58,9 +59,11 @@ RTC_DATA_ATTR Measurement measurements[MAX_READINGS];
 HTTPClient http;                // HTTPClient user for transfering data to InfluxDB
 BMx280I2C bmx280x76(0x76);      // Sensor at 0x76
 BMx280I2C bmx280x77(0x77);      // Sensor at 0x77
+AHT20 aht20;                    // AHT20 Sensor
 
 RTC_DATA_ATTR bool hasSensor0x76;
 RTC_DATA_ATTR bool hasSensor0x77;
+RTC_DATA_ATTR bool hasSensorAHT;
 RTC_DATA_ATTR bool firstRun = true;
 
 
@@ -87,6 +90,11 @@ bool setupSensor(byte address) {
     currentSensor = &bmx280x76;
   } else {
     currentSensor = &bmx280x77;
+  }
+  if (aht20.available()) {
+    hasSensorAHT = true;
+  } else {
+    hasSensorAHT = false;
   }
   Serial.println("Detected BMx280 sensor at 0x" + String(address, HEX) + ".");
   return true;
@@ -185,12 +193,12 @@ void setup() {
   long then = esp_log_timestamp();
   // initialize the sensor
   if (hasSensor0x76 == true) {
-    addSensorMeasure(&bmx280x76, 0x76);
+    addBmeSensorMeasure(&bmx280x76, 0x76);
     transferSensorDataIfNecessary();
   }
 
   if (hasSensor0x77 == true) {
-    addSensorMeasure(&bmx280x77, 0x77);
+    addBmeSensorMeasure(&bmx280x77, 0x77);
     transferSensorDataIfNecessary();
   }
 
@@ -211,6 +219,32 @@ void setup() {
 }
 
 /***************************************************************************
+ *  Determine whether to skip the current reading.
+ ***************************************************************************/
+bool skipCurrentReading() {
+  // skip sensor reading based on the available puffer size
+  if (numMeasurement > MAX_READINGS * 0.8 && skip < 15) {
+      skip += 1 ;
+      return true;
+  }
+  if (numMeasurement > MAX_READINGS * 0.6 && skip < 7) {
+      skip += 1 ;
+      return true;
+  }
+  if (numMeasurement > MAX_READINGS * 0.4 && skip < 3) {
+    skip += 1;
+    return true;
+  }
+  if (numMeasurement > MAX_READINGS * 0.2 && skip < 1) {
+    skip += 1;
+    return true;
+  }
+  skip = 0;
+  return false;
+}
+
+
+/***************************************************************************
  *  Adds the measurement for the given sensor and i2c address to the
  *  measurements array.
  * 
@@ -218,26 +252,10 @@ void setup() {
  *  - currentSensor: pointer to the sensor to use for the measure
  *  - address: i2c address of the sensor (0x76 or 0x77)
  ***************************************************************************/
-void addSensorMeasure(BMx280I2C *currentSensor, byte address) {
-  // skip sensor reading based on the available puffer size
-  if (numMeasurement > MAX_READINGS * 0.8 && skip < 15) {
-      skip += 1 ;
-      return;
-  }
-  if (numMeasurement > MAX_READINGS * 0.6 && skip < 7) {
-      skip += 1 ;
-      return;
-  }
-  if (numMeasurement > MAX_READINGS * 0.4 && skip < 3) {
-    skip += 1;
+void addBmeSensorMeasure(BMx280I2C *currentSensor, byte address) {
+  if (skipCurrentReading()) {
     return;
   }
-  if (numMeasurement > MAX_READINGS * 0.2 && skip < 1) {
-    skip += 1;
-    return;
-  }
-  skip = 0;
-
   Wire.begin();
   currentSensor->begin();
   //reset sensor to default parameters.
@@ -276,18 +294,35 @@ void addSensorMeasure(BMx280I2C *currentSensor, byte address) {
   // time(&measurements[numMeasurement % MAX_READINGS].time);
   Serial.print("Recording measurement #");
   Serial.print(numMeasurement + 1);
-  Serial.print(" on ");
+  Serial.print(" at ");
   Serial.print(ctime(&measurements[numMeasurement % MAX_READINGS].time));
   Serial.print("with temperature: ");
   Serial.print(measurements[numMeasurement % MAX_READINGS].temperature);
   Serial.print(", pressure: ");
   Serial.print(measurements[numMeasurement % MAX_READINGS].pressure);
   if (&measurements[numMeasurement % MAX_READINGS].humidity >= 0) {
-    Serial.print(", humidity: ");
+    
     Serial.print(measurements[numMeasurement % MAX_READINGS].humidity);
   }
   Serial.println();
   numMeasurement++;
+}
+
+/***************************************************************************
+ *  Adds the measurement for the AHT sensor to the measurements array.
+ ***************************************************************************/
+void addAhtMeasure() {
+  measurements[numMeasurement % MAX_READINGS].time = time(NULL);
+  measurements[numMeasurement % MAX_READINGS].temperature = aht20.getTemperature();
+  measurements[numMeasurement % MAX_READINGS].humidity = aht20.getHumidity();
+  measurements[numMeasurement % MAX_READINGS].pressure = -1;
+
+  Serial.print("Recording measurement #");
+  Serial.print(numMeasurement + 1);
+  Serial.print(" at ");
+  Serial.print(ctime(&measurements[numMeasurement % MAX_READINGS].time));
+  Serial.print("with temperature: ");
+  Serial.print(", humidity: ");
 }
 
 /***************************************************************************   
