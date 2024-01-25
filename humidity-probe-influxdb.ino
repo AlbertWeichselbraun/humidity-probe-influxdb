@@ -91,11 +91,6 @@ bool setupSensor(byte address) {
   } else {
     currentSensor = &bmx280x77;
   }
-  if (aht20.available()) {
-    hasSensorAHT = true;
-  } else {
-    hasSensorAHT = false;
-  }
   Serial.println("Detected BMx280 sensor at 0x" + String(address, HEX) + ".");
   return true;
 }
@@ -160,9 +155,16 @@ void initialSetup() {
   Serial.println(F("Detecting sensor..."));
   Wire.begin();
   hasSensor0x76 = setupSensor(0x76);
-  hasSensor0x77 = setupSensor(0x77);    
-  if (hasSensor0x76 == false && hasSensor0x77 == false) {
-    Serial.println("ERROR: No BMx280 sensor found.");
+  hasSensor0x77 = setupSensor(0x77);
+  if (aht20.available()) {
+    hasSensorAHT = true;
+    Serial.println("Detected AHT 20 sensor.");
+  } else {
+    hasSensorAHT = false;
+  }
+
+  if (hasSensor0x76 == false && hasSensor0x77 == false && hasSensorAHT == false) {
+    Serial.println("ERROR: No BMx280 or AHT20 sensor found.");
     while (1);
   }
 
