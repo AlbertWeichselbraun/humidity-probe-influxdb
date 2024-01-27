@@ -1,9 +1,10 @@
 /***************************************************************************
- *  Transfers Sensor data from the BME280 to a time series database and 
- *  caches measurements, if the network is not available yet.
+ *  Transfers Sensor data from the BMEx280 or AHT20 to a time series database 
+ *  and  caches measurements, if the network is not available yet.
  *  
- *  Sensor library:     
- *    https://bitbucket.org/christandlg/bmx280mi/
+ *  Sensor libraries:     
+ *  - BMx280: https://bitbucket.org/christandlg/bmx280mi/
+ *  - AHT20: https://github.com/dvarrel/AHT20
  *    
  *  (C)opyrights 2020-2024 by Albert Weichselbraun.
  *  
@@ -38,7 +39,7 @@
 #include "custom.h"
 
 #define WIFI_RECONNECT_DELAY_MS 500
-#define MAX_READINGS 160                    // preliminary estimation of the maximum number of readings we can cache
+#define MAX_READINGS 300                    // preliminary estimation of the maximum number of readings we can cache; RTC memory amounts to 8192 bytes
 #define HTTP_TRANSFER_BATCH_SIZE 10         // http transfer batch size
 
 // Define data record
@@ -46,13 +47,15 @@ RTC_DATA_ATTR int numRestart = 0;
 RTC_DATA_ATTR int numMeasurement = 0;
 RTC_DATA_ATTR int skip = 0;                 // metrics to skip
 
+__attribute__((packed))
 struct Measurement {
   float temperature;
   float humidity;
   float pressure;
-  byte address;
+  byte address;  // 0x76, 0x77 or 0x20 (AHT20)
   time_t time;
 };
+__attribute__((packed))
 
 RTC_DATA_ATTR Measurement measurements[MAX_READINGS];
 
@@ -103,7 +106,7 @@ bool setupSensor(byte address) {
  *    true if the setting up the Wifi succeeded, false otherwise.
  ***************************************************************************/
 bool setupWifi() {
-  Serial.println("Connecting to Wifi.");
+  Serial.print("Connecting to Wifi.");
   if (WiFi.getMode() != WIFI_AP) {
     WiFi.mode(WIFI_AP);
   }
@@ -119,7 +122,7 @@ bool setupWifi() {
     Serial.flush();
     delay(WIFI_RECONNECT_DELAY_MS);
   }
-  Serial.print("Wifi: IP Address: ");
+  Serial.println("\nWifi: IP Address: ");
   Serial.println(WiFi.localIP());
   return WiFi.status() == WL_CONNECTED;
 }
@@ -156,7 +159,7 @@ void initialSetup() {
   Wire.begin();
   hasSensor0x76 = setupSensor(0x76);
   hasSensor0x77 = setupSensor(0x77);
-  if (aht20.available()) {
+  if (aht20.begin() == true) {
     hasSensorAHT = true;
     Serial.println("Detected AHT 20 sensor.");
   } else {
@@ -193,16 +196,18 @@ void setup() {
   // obtain a measurement and enter deep sleep afterwards
   // 
   long then = esp_log_timestamp();
-  // initialize the sensor
+  // get the sensor data
   if (hasSensor0x76 == true) {
     addBmeSensorMeasure(&bmx280x76, 0x76);
-    transferSensorDataIfNecessary();
   }
-
   if (hasSensor0x77 == true) {
     addBmeSensorMeasure(&bmx280x77, 0x77);
-    transferSensorDataIfNecessary();
   }
+  if (hasSensorAHT == true) {
+    addAhtSensorMeasure();
+  }
+  // transfer data, if necessary.
+  transferSensorDataIfNecessary();
 
   if (firstRun) {
     transferSensorData();
@@ -307,16 +312,23 @@ void addBmeSensorMeasure(BMx280I2C *currentSensor, byte address) {
     Serial.print(measurements[numMeasurement % MAX_READINGS].humidity);
   }
   Serial.println();
-  numMeasurement++;
+
 }
 
 /***************************************************************************
  *  Adds the measurement for the AHT sensor to the measurements array.
  ***************************************************************************/
-void addAhtMeasure() {
+void addAhtSensorMeasure() {
+  Wire.begin();
+  aht20.begin();
+    do {
+      delay(100);
+  } while (aht20.available() == false);
+
   measurements[numMeasurement % MAX_READINGS].time = time(NULL);
   measurements[numMeasurement % MAX_READINGS].temperature = aht20.getTemperature();
   measurements[numMeasurement % MAX_READINGS].humidity = aht20.getHumidity();
+  measurements[numMeasurement % MAX_READINGS].address = 0x20;
   measurements[numMeasurement % MAX_READINGS].pressure = -1;
 
   Serial.print("Recording measurement #");
@@ -324,7 +336,10 @@ void addAhtMeasure() {
   Serial.print(" at ");
   Serial.print(ctime(&measurements[numMeasurement % MAX_READINGS].time));
   Serial.print("with temperature: ");
-  Serial.print(", humidity: ");
+  Serial.print(measurements[numMeasurement % MAX_READINGS].temperature);
+  Serial.print(" and humidity: ");
+  Serial.println(measurements[numMeasurement % MAX_READINGS].humidity);
+  numMeasurement++;
 }
 
 /***************************************************************************   
@@ -361,9 +376,7 @@ void transferSensorData() {
   }
 
   // Transfer data
-  Serial.println("Transferring data to InfluxDB");
   transferBatch();
-  Serial.println("\nCompleted :)");
   // disable Wifi
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);  
@@ -376,19 +389,28 @@ void transferSensorData() {
  *  Use the InfluxDB line protocol
  *  see: https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/
  *  
- *  Returns:    
- *    true if the transfer succeeds else otherwise.
  ***************************************************************************/
-boolean transferBatch() {
+void transferBatch() {
   std::ostringstream oss;  
-  for (int i=0; i < min(numMeasurement, MAX_READINGS); i++) {
-    if (measurements[i].humidity >= 0) {
-      oss << "bme280,sensor=bme280x0" << String(measurements[i].address, HEX) << ",host=" << WiFi.macAddress().c_str() << " temperature=" << measurements[i].temperature << ",humidity=" 
-          << measurements[i].humidity << ",pressure=" << measurements[i].pressure  << " " << measurements[i].time << "000000000\n"; // we need to add 9 zeros to the time, since InfluxDB expects ns.
+  Serial.print("Transfering a batch of "); 
+  Serial.print(numMeasurement);
+  Serial.println(" measurements.");
+  for (int i=0; i < min(numMeasurement, MAX_READINGS); i++) {    
+    oss << "sensor,host=" << WiFi.macAddress().c_str() << ",temperature=" << measurements[i].temperature;
+    // add sensor specific tags and metrics
+    if (measurements[i].address == 0x20) {
+      oss << ",sensor=aht20,humidity=" << measurements[i].humidity;
     } else {
-      oss << "bme280,sensor=bmp280x0" << String(measurements[i].address, HEX) <<  ",host=" << WiFi.macAddress().c_str() << " temperature=" << measurements[i].temperature
-          << ",pressure=" << measurements[i].pressure << " " << measurements[i].time << "000000000\n"; // 
+      oss << ",pressure=" << measurements[i].pressure;  
+      if (measurements[i].humidity > 0) {
+        oss << ",sensor=bme280x0" << String(measurements[i].address, HEX) << ",humidity=" << measurements[i].humidity;
+      } else {
+        oss << ",sensor=bmp280x0" << String(measurements[i].address, HEX);
+      }
     }
+    // add timestamp
+    // we need to add nine zeros to the time, since InfluxDB expects ns.
+    oss << " " << measurements[i].time << "000000000\n"; 
     if (((i+1) % HTTP_TRANSFER_BATCH_SIZE) == 0) {
       transferString(oss.str().c_str());
       oss.str("");
@@ -397,7 +419,6 @@ boolean transferBatch() {
   }
   transferString(oss.str().c_str());
   numMeasurement = 0;
-  return true;
 }
 
 /***************************************************************************
