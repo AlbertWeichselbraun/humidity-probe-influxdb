@@ -396,21 +396,21 @@ void transferBatch() {
   Serial.print(numMeasurement);
   Serial.println(" measurements.");
   for (int i=0; i < min(numMeasurement, MAX_READINGS); i++) {    
-    oss << "sensor,host=" << WiFi.macAddress().c_str() << ",temperature=" << measurements[i].temperature;
+    oss << "sensor,host=" << WiFi.macAddress().c_str();
     // add sensor specific tags and metrics
     if (measurements[i].address == 0x20) {
-      oss << ",sensor=aht20,humidity=" << measurements[i].humidity;
+      oss << ",sensor=aht20 humidity=" << measurements[i].humidity;
     } else {
-      oss << ",pressure=" << measurements[i].pressure;  
       if (measurements[i].humidity > 0) {
-        oss << ",sensor=bme280x0" << String(measurements[i].address, HEX) << ",humidity=" << measurements[i].humidity;
+        oss << ",sensor=bme280x0" << String(measurements[i].address, HEX) << " humidity=" << measurements[i].humidity << ",";
       } else {
-        oss << ",sensor=bmp280x0" << String(measurements[i].address, HEX);
+        oss << ",sensor=bmp280x0" << String(measurements[i].address, HEX) << " ";
       }
+      oss << "pressure=" << measurements[i].pressure;  
     }
-    // add timestamp
+    // add temperature and timestamp
     // we need to add nine zeros to the time, since InfluxDB expects ns.
-    oss << " " << measurements[i].time << "000000000\n"; 
+    oss << ",temperature=" << measurements[i].temperature << " " << measurements[i].time << "000000000\n"; 
     if (((i+1) % HTTP_TRANSFER_BATCH_SIZE) == 0) {
       transferString(oss.str().c_str());
       oss.str("");
